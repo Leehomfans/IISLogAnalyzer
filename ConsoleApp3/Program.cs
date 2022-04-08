@@ -21,6 +21,7 @@ namespace ConsoleApp3
             sw.Start();
             Expression<Func<IISLogEvent, bool>> expression = item=> 1!=1;
             string filepath = ConfigurationManager.AppSettings["IISlogDir"].ToString();
+            List<string> fileList = new List<string>();
             if(!Directory.Exists(filepath))
             {
                 Console.WriteLine("目录不存在");
@@ -28,13 +29,9 @@ namespace ConsoleApp3
             else
             {
                 var lastfilepath = (from f in Directory.GetFiles(filepath)
-                             let fi = new FileInfo(f)
-                             orderby fi.CreationTime descending
-                             select fi.FullName).FirstOrDefault();
-                if(string.IsNullOrEmpty(lastfilepath))
-                {
-                    Console.WriteLine("文件夹下面没有文件");
-                }
+                                    let fi = new FileInfo(f)
+                                    orderby fi.CreationTime descending
+                                    select fi.FullName).Skip(1).FirstOrDefault();
                 filepath = lastfilepath;
             }
             string requestPathRegex= ConfigurationManager.AppSettings["PathRegex"].ToString();
@@ -58,7 +55,7 @@ namespace ConsoleApp3
         /// IIS日志分析器
         /// </summary>
         /// <param name="filepath"></param>
-        public static void IISlogAnalyzer(string filepath, Func<IISLogEvent, bool> express,int cnt=1000)
+        public static void IISlogAnalyzer(string filepath, Func<IISLogEvent, bool> express,int cnt=15)
         {
             List<IISLogEvent> logs = new List<IISLogEvent>();
             using (ParserEngine parser = new ParserEngine(filepath))
@@ -67,12 +64,14 @@ namespace ConsoleApp3
                 {
                     logs = parser.ParseLog().ToList();
                 }
+                List<IISLogEvent> loglist = logs.Where(i =>!string.IsNullOrEmpty(i.csReferer) && !string.IsNullOrEmpty(i.csUriStem) && i.csUserAgent.Contains("Baiduspider") && i.csReferer.Contains("baidu.com")).ToList();
                 string hostIp = logs.Select(g => g.sIp).FirstOrDefault();
                 string expireTS = ConfigurationManager.AppSettings["expirets"].ToString();
                 ResetFireWallBlackIp("Block Bad IP Addresses", hostIp, expireTS);//清除防火墙中过期的黑名单Ip
                 List<string> ipList = new List<string>();
-                ipList=logs.Where(express).Select(i => i.cIp).Distinct().ToList();
-                ipList=ipList.Union(logs.GroupBy(item => item.cIp).Select(g => new { cip = g.Key, cnt = g.Count() }).Where(g => g.cnt > cnt).Select(i => i.cip).ToList()).ToList();
+                ipList =logs.Where(item=>!string.IsNullOrEmpty(item.csUriStem) && !string.IsNullOrEmpty(item.csUserAgent)).Where(express).Select(i => i.cIp).Distinct().ToList();
+                var cntList = logs.GroupBy(item => new { item.cIp, item.DateTimeEvent }).Select(g => new { cip = g.Key, cnt = g.Count() }).Where(g => g.cnt > cnt).Select(i => i.cip.cIp).Distinct().ToList();
+                ipList =ipList.Union(cntList).ToList();
                 string ips=string.Join(",", ipList);
                 Console.WriteLine("发现异常IP:"+ ips);
                 PutFireWall(ips);
